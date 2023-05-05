@@ -46,11 +46,11 @@ elif cat /proc/version | grep -q -E -i "ubuntu"; then
 elif cat /proc/version | grep -q -E -i "centos|red hat|redhat"; then
     release="centos"
 else
-    OUT_ERROR "[错误] 不支持的操作系统！"
+    OUT_ERROR "[ERROR] OS NOT SUPPORTED"
     exit 1
 fi
 
-OUT_ALERT "[信息] 正在更新系统中！"
+OUT_ALERT "UPDATING OS"
 if [[ ${release} == "centos" ]]; then
     yum makecache
     yum install epel-release -y
@@ -62,18 +62,18 @@ else
     apt autoremove --purge -y
 fi
 
-OUT_ALERT "[信息] 正在安装 haveged 增强性能中！"
+OUT_ALERT "INSTALLING haveged FOR PERFORMANCE BOOST"
 if [[ ${release} == "centos" ]]; then
     yum install haveged -y
 else
     apt install haveged -y
 fi
 
-OUT_ALERT "[信息] 正在配置 haveged 增强性能中！"
+OUT_ALERT "CONFIGURING haveged"
 systemctl disable --now haveged
 systemctl enable --now haveged
 
-OUT_ALERT "[信息] 正在优化系统参数中！"
+OUT_ALERT "OPTIMISING PARAMETERS"
 modprobe ip_conntrack
 chattr -i /etc/sysctl.conf
 cat > /etc/sysctl.conf << EOF
@@ -138,5 +138,5 @@ ForwardToSyslog=no
 EOF
 sysctl -p
 
-OUT_INFO "[信息] 优化完毕！"
+OUT_INFO "OS OPTIMISED"
 exit 0
