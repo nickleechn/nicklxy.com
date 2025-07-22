@@ -1,191 +1,154 @@
-# -*- coding: utf-8 -*-
 # VERSION: 1.0
-# AUTHORS: qBittorrent search plugin for 1337x.to
-
-try:
-    from HTMLParser import HTMLParser
-except ModuleNotFoundError:
-    from html.parser import HTMLParser
-
-# import qBT modules
-try:
-    from novaprinter import prettyPrinter
-    from helpers import retrieve_url
-except ModuleNotFoundError:
-    pass
+# AUTHORS: qBittorrent 1337x.to search plugin
 
 import re
+from html.parser import HTMLParser
+
+from helpers import retrieve_url
+from novaprinter import prettyPrinter
+
 
 class leet(object):
-    """Class used by qBittorrent to search for torrents on 1337x.to"""
+    url = "https://1337x.to"
+    name = "1337x"
+    supported_categories = {'all': 'all',
+                            'movies': 'Movies',
+                            'tv': 'TV', 
+                            'music': 'Music',
+                            'games': 'Games',
+                            'anime': 'Anime',
+                            'software': 'Apps'}
 
-    url = 'https://1337x.to'
-    name = '1337x'
+    def download_torrent(self, info):
+        print(info)
 
-    # defines which search categories are supported by this search engine
-    supported_categories = {
-        'all': '',
-        'movies': 'Movies',
-        'tv': 'TV',
-        'music': 'Music',
-        'games': 'Games',
-        'anime': 'Anime',
-        'software': 'Apps'
-    }
-
-    class LeetParser(HTMLParser):
-        """Parses 1337x.to search results"""
-
-        def __init__(self, results, base_url):
-            """Initialize parser"""
-            try:
-                super().__init__()
-            except TypeError:
-                HTMLParser.__init__(self)
-            
-            self.results = results
-            self.base_url = base_url
-            self.current_item = None
-            self.td_counter = -1
+    class MyHtmlParser(HTMLParser):
+        """ Parser for 1337x search results """
+        def __init__(self, url):
+            HTMLParser.__init__(self)
+            self.url = url
+            self.tbody_found = False
+            self.row_found = False
+            self.name_cell = False
+            self.seeds_cell = False
+            self.leech_cell = False
+            self.size_cell = False
+            self.current_item = {}
+            self.cell_count = 0
+            self.page_items = 0
 
         def handle_starttag(self, tag, attrs):
-            """Handle opening tags"""
-            if tag == 'a':
-                self.start_a(attrs)
-
-        def handle_endtag(self, tag):
-            """Handle closing tags"""
-            if tag == 'td':
-                self.start_td()
-
-        def start_a(self, attrs):
-            """Handle anchor tags"""
             params = dict(attrs)
             
-            # Get torrent name and detail page link from title attribute
-            if 'title' in params and 'href' in params and params['href'].startswith('/torrent/'):
-                hit = {
-                    'name': params['title'],
-                    'desc_link': self.base_url + params['href'],
-                    'engine_url': self.base_url
-                }
-                if not self.current_item:
-                    self.current_item = hit
+            if tag == "tbody":
+                self.tbody_found = True
+                
+            elif self.tbody_found and tag == "tr":
+                self.row_found = True
+                self.current_item = {}
+                self.cell_count = 0
+                
+            elif self.row_found and tag == "td":
+                self.cell_count += 1
+                # Reset cell flags
+                self.name_cell = False
+                self.seeds_cell = False
+                self.leech_cell = False
+                self.size_cell = False
+                
+                # Set appropriate cell flag based on position
+                if self.cell_count == 1:  # Name column
+                    self.name_cell = True
+                elif self.cell_count == 2:  # Seeders
+                    self.seeds_cell = True
+                elif self.cell_count == 3:  # Leechers  
+                    self.leech_cell = True
+                elif self.cell_count == 5:  # Size (usually 5th column)
+                    self.size_cell = True
                     
-            elif 'href' in params and self.current_item:
-                # Look for magnet links
-                if params['href'].startswith('magnet:?'):
-                    self.current_item['link'] = params['href']
-                    self.td_counter += 1
-
-        def start_td(self):
-            """Handle table cell transitions"""
-            if self.td_counter >= 0:
-                self.td_counter += 1
-
-            # After processing enough cells, add result and reset
-            if self.td_counter >= 4:  # Reduced since we get name from title attribute
-                if self.current_item and self.current_item.get('name'):
-                    # If no magnet link found, try to get it from detail page
-                    if 'link' not in self.current_item:
-                        magnet = self._get_magnet_from_page(self.current_item['desc_link'])
-                        if magnet:
-                            self.current_item['link'] = magnet
-                    
-                    if 'link' in self.current_item:
-                        # Set defaults for missing data
-                        if 'seeds' not in self.current_item:
-                            self.current_item['seeds'] = -1
-                        if 'leech' not in self.current_item:
-                            self.current_item['leech'] = -1
-                        if 'size' not in self.current_item:
-                            self.current_item['size'] = '-1'
-                        
-                        self.results.append(self.current_item)
-                        
-                self.current_item = None
-                self.td_counter = -1
+            elif self.name_cell and tag == "a":
+                if "href" in params and params["href"].startswith("/torrent/"):
+                    self.current_item["desc_link"] = self.url + params["href"]
+                    self.current_item["engine_url"] = self.url
 
         def handle_data(self, data):
-            """Handle text data"""
-            if self.td_counter > 0 and self.td_counter <= 5 and self.current_item:
-                data = data.strip()
-                if not data:
-                    return
-                    
-                # Size info
-                if self.td_counter == 1:
-                    self.current_item['size'] = data
-                # Seeds
-                elif self.td_counter == 2:
-                    try:
-                        self.current_item['seeds'] = int(data)
-                    except ValueError:
-                        self.current_item['seeds'] = -1
-                # Leechers  
-                elif self.td_counter == 3:
-                    try:
-                        self.current_item['leech'] = int(data)
-                    except ValueError:
-                        self.current_item['leech'] = -1
+            data = data.strip()
+            if not data:
+                return
+                
+            if self.name_cell and "name" not in self.current_item:
+                self.current_item["name"] = data
+            elif self.seeds_cell:
+                try:
+                    self.current_item["seeds"] = int(data)
+                except ValueError:
+                    self.current_item["seeds"] = -1
+            elif self.leech_cell:
+                try:
+                    self.current_item["leech"] = int(data)
+                except ValueError:
+                    self.current_item["leech"] = -1
+            elif self.size_cell:
+                self.current_item["size"] = data
 
-        def _get_magnet_from_page(self, detail_url):
-            """Get magnet link from detail page"""
+        def handle_endtag(self, tag):
+            if tag == "tbody":
+                self.tbody_found = False
+            elif tag == "tr" and self.row_found:
+                # End of row - process item if valid
+                if self.current_item.get("name") and self.current_item.get("desc_link"):
+                    # Get magnet link from detail page
+                    magnet_link = self._get_magnet_link(self.current_item["desc_link"])
+                    if magnet_link:
+                        self.current_item["link"] = magnet_link
+                        
+                        # Set defaults for missing data
+                        if "seeds" not in self.current_item:
+                            self.current_item["seeds"] = -1
+                        if "leech" not in self.current_item:
+                            self.current_item["leech"] = -1
+                        if "size" not in self.current_item:
+                            self.current_item["size"] = "-1"
+                            
+                        prettyPrinter(self.current_item)
+                        self.page_items += 1
+                
+                self.row_found = False
+                self.current_item = {}
+
+        def _get_magnet_link(self, detail_url):
+            """Extract magnet link from torrent detail page"""
             try:
                 page_content = retrieve_url(detail_url)
                 if page_content:
-                    magnet_match = re.search(r'(magnet:\?[^\s<>"&]+)', page_content, re.IGNORECASE)
+                    # Look for magnet links
+                    magnet_match = re.search(r'href=["\']?(magnet:\?[^"\'\s>]+)["\']?', 
+                                           page_content, re.IGNORECASE)
                     if magnet_match:
                         return magnet_match.group(1)
+                    
+                    # Alternative pattern
+                    magnet_match2 = re.search(r'(magnet:\?[^\s<>"&]+)', 
+                                            page_content, re.IGNORECASE)
+                    if magnet_match2:
+                        return magnet_match2.group(1)
             except Exception:
                 pass
             return None
 
-    def search(self, what, cat='all'):
-        """
-        Search for torrents on 1337x.to
+    def search(self, query, cat='all'):
+        """ Performs search """
+        category = self.supported_categories[cat]
         
-        Parameters:
-        :param what: search query string
-        :param cat: search category
-        """
         # Build search URL
         if cat == 'all':
-            url = "{}/search/{}/1/".format(self.url, what)
+            search_url = f"{self.url}/search/{query}/1/"
         else:
-            category = self.supported_categories.get(cat, '')
-            if category:
-                url = "{}/category-search/{}/{}/1/".format(self.url, what, category)
-            else:
-                url = "{}/search/{}/1/".format(self.url, what)
+            search_url = f"{self.url}/category-search/{query}/{category}/1/"
 
-        hits = []
-        page = 1
-        parser = self.LeetParser(hits, self.url)
-        
-        while True:
-            # Build URL with page number
-            page_url = url.replace('/1/', '/{}/'.format(page))
-            res = retrieve_url(page_url)
-            
-            if not res:
-                break
-                
-            parser.feed(res)
-            
-            # Print results
-            for hit in hits:
-                prettyPrinter(hit)
-
-            # Stop if we got less than expected results (end of pages)
-            if len(hits) < 20:  # 1337x typically shows 20 results per page
-                break
-                
-            del hits[:]
-            page += 1
-            
-            # Limit to reasonable number of pages
-            if page > 10:
-                break
-
-        parser.close()
+        # Parse first page
+        parser = self.MyHtmlParser(self.url)
+        html = retrieve_url(search_url)
+        if html:
+            parser.feed(html)
+            parser.close()
